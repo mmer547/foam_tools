@@ -3,6 +3,8 @@
 """
 OpenFOAM の体積メッシュを読み、vtkCylinder + vtkCutter で半径 r の円筒面と交差させ、
 得られた表面を周方向角 theta と軸方向座標で展開し平面 (u, v) に写像する。
+速度 U があるときは展開面内の接線成分 (U·e_theta, U·e_axial, 0) を point ベクトルとして追加する
+（ParaView の SurfaceLIC など用。既定の名前は U_unfold）。
 
 写像（既定: 軸が +Z、軸上の基準点は --axis-origin）:
   u = r * theta   （theta = atan2(y - cy, x - cx)、ラジアン、展開後の周方向弧長）
@@ -211,6 +213,71 @@ def _unfold_points(
     return np.column_stack([u, v, np.zeros(points.shape[0], dtype=points.dtype)])
 
 
+def _cylinder_uv_basis(
+    points: np.ndarray,
+    axis: str,
+    origin: tuple[float, float, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    円筒面上の接線基底（単位ベクトル）。
+    e_theta: 周方向（theta 増加方向）。e_axial: 円筒軸方向（+X / +Y / +Z）。
+    いずれも (N, 3)。
+    """
+    ox, oy, oz = origin
+    dx = points[:, 0] - ox
+    dy = points[:, 1] - oy
+    dz = points[:, 2] - oz
+    n = points.shape[0]
+    ax = axis.strip().lower()
+    if ax == "z":
+        r = np.sqrt(dx * dx + dy * dy)
+        e_theta = np.column_stack([-dy, dx, np.zeros(n, dtype=points.dtype)])
+        e_axial = np.tile(np.array([0.0, 0.0, 1.0], dtype=points.dtype), (n, 1))
+    elif ax == "y":
+        r = np.sqrt(dx * dx + dz * dz)
+        e_theta = np.column_stack([-dz, np.zeros(n, dtype=points.dtype), dx])
+        e_axial = np.tile(np.array([0.0, 1.0, 0.0], dtype=points.dtype), (n, 1))
+    elif ax == "x":
+        r = np.sqrt(dy * dy + dz * dz)
+        e_theta = np.column_stack([np.zeros(n, dtype=points.dtype), -dz, dy])
+        e_axial = np.tile(np.array([1.0, 0.0, 0.0], dtype=points.dtype), (n, 1))
+    else:
+        raise ValueError(f"axis は x, y, z のいずれか: {axis!r}")
+    r_safe = np.maximum(r, 1e-30)
+    e_theta = e_theta / r_safe[:, np.newaxis]
+    return e_theta, e_axial
+
+
+def _velocity_unfold_xyz(
+    points: np.ndarray,
+    U: np.ndarray,
+    axis: str,
+    axis_origin: tuple[float, float, float],
+) -> np.ndarray:
+    """世界座標の U を展開平面上の (u方向, v方向, 0) 成分に射影（各点で内積）。"""
+    if U.ndim != 2 or U.shape[1] < 3:
+        raise RuntimeError(f"U の形状が想定外です: {U.shape}（(N,3) を想定）")
+    e_th, e_ax = _cylinder_uv_basis(points, axis, axis_origin)
+    uu = np.einsum("ij,ij->i", U[:, :3], e_th)
+    vv = np.einsum("ij,ij->i", U[:, :3], e_ax)
+    z0 = np.zeros(points.shape[0], dtype=U.dtype)
+    return np.column_stack([uu, vv, z0])
+
+
+def _ensure_point_velocity(mesh) -> np.ndarray | None:
+    """スライスメッシュの各頂点での U (N,3)。無ければ None。cell のみのときは point に複写する。"""
+    if "U" in mesh.point_data:
+        return np.asarray(mesh.point_data["U"], dtype=float)
+    if "U" not in mesh.cell_data:
+        return None
+    c2p = mesh.cell_data_to_point_data()
+    if "U" not in c2p.point_data:
+        return None
+    u_p = np.asarray(c2p.point_data["U"], dtype=float)
+    mesh.point_data["U"] = u_p
+    return u_p
+
+
 def _vtk_cylinder_implicit(
     radius: float,
     axis: str,
@@ -335,6 +402,18 @@ def main() -> int:
         help="展開後メッシュを保存するパス（省略時は書き出さない）。PolyData のため .vtp 等",
     )
     parser.add_argument(
+        "--no-u-unfold",
+        action="store_true",
+        help="速度 U の展開面ベクトル（SurfaceLIC 用）を追加しない",
+    )
+    parser.add_argument(
+        "--u-unfold-name",
+        type=str,
+        default="U_unfold",
+        metavar="NAME",
+        help="展開面内速度の point ベクトル名（既定: U_unfold）。第1成分周方向第2成分軸方向",
+    )
+    parser.add_argument(
         "--cmap",
         type=str,
         default="turbo",
@@ -394,6 +473,24 @@ def main() -> int:
 
     scalar_name = _pick_scalar_array_name(cut, args.scalars)
     pts = np.asarray(cut.points, dtype=float)
+
+    if not args.no_u_unfold:
+        u_pts = _ensure_point_velocity(cut)
+        if u_pts is not None:
+            if u_pts.shape[0] != pts.shape[0]:
+                print(
+                    "警告: U の点数が頂点数と一致しません。U_unfold は追加しません。",
+                    file=sys.stderr,
+                )
+            else:
+                name_u = (args.u_unfold_name.strip() or "U_unfold")
+                cut.point_data[name_u] = _velocity_unfold_xyz(
+                    pts, u_pts, args.axis, axis_origin
+                )
+                print(
+                    f"SurfaceLIC 用ベクトル {name_u!r} を追加しました（周方向, 軸方向, 0）。"
+                )
+
     cut.points = _unfold_points(pts, args.axis, axis_origin, r0)
 
     if args.vtk is not None:
