@@ -7,6 +7,14 @@ OpenFOAM の**体積メッシュ**と半径 `r` の**円筒面**（`vtkCylinder`
 
 θ は主に `[-π, π]` です。全周展開では **θ = ±π の接縫**をまたぐセルをそのまま写すと、画面を横断する引き伸ばし面になりコンターが非連続に見えます。本ツールは該当セルを**除去**してから展開します（接縫付近に細い隙間が残ることがあります）。コンター用スカラーが cell データのときは point へ平均化し、滑らかに塗ります。
 
+### 半径方向成分コンター
+
+`--scalars U_r`（別名 `Ur` / `U_radial`）を指定すると、展開**前**の元座標系円筒基底で
+
+- **`U_r` = `U · e_r`**（半径方向・外向き）
+
+を計算して塗り分けます。`--axis` / `--axis-origin` に従います。
+
 ### SurfaceLIC 用の速度ベクトル
 
 ケースに速度 **`U`** があるとき、展開**前**の円筒接線基底で
@@ -39,13 +47,14 @@ pip install pyvista numpy matplotlib
 python foam_cylindrical_slice_unfold.py path/to/case --radius 0.05
 python foam_cylindrical_slice_unfold.py path/to/case -r 0.05 --scalars p --vtk unfolded.vtp
 python foam_cylindrical_slice_unfold.py path/to/case -r 0.05 --triangles
+python foam_cylindrical_slice_unfold.py path/to/case -r 0.05 --scalars U_r -o ur.png
 python foam_cylindrical_slice_unfold.py path/to/case -r 0.05 --surface-lic -o lic.png
 ```
 
 - `--radius` / `-r`: 円筒半径（カッターに使用。展開の `u = r*θ` にも使用）
 - `--triangles`: カッター出力を三角形化
 - `--axis`: 円筒軸 `x` / `y` / `z`（既定: `z`）
-- `--scalars`: コンタ用の場（未指定時は `U` から `|U|`、なければ先頭のスカラー）
+- `--scalars`: コンタ用の場（未指定時は `U` から `|U|`、なければ先頭のスカラー）。`U_r` で半径方向成分
 - `--vtk`: 展開後メッシュを保存（**`.vtp`** など PolyData 向け。拡張子が合わない場合は自動で置換）
 - `--surface-lic`: VTK SurfaceLIC で画像出力
 - `--no-u-unfold` / `--u-unfold-name`: SurfaceLIC 用ベクトル（既定 `U_unfold`）
