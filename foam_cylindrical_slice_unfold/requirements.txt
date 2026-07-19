@@ -1,3 +1,4 @@
 matplotlib>=3.5
 numpy>=1.22
 pyvista>=0.40
+vtk>=9.2
