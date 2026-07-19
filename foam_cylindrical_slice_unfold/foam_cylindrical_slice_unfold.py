@@ -327,7 +327,7 @@ def _screenshot_surface_lic(
     scalar_name: str,
     cmap: str,
     title: str,
-    window_size: tuple[int, int] = (1000, 700),
+    window_size: tuple[int, int] = (1600, 1000),
 ) -> None:
     """
     VTK の vtkSurfaceLICMapper で SurfaceLIC を描画し PNG 保存する。
@@ -382,9 +382,14 @@ def _screenshot_surface_lic(
     mapper.SetUseLookupTableScalarRange(True)
 
     lic = mapper.GetLICInterface()
-    lic.SetNumberOfSteps(40)
-    lic.SetStepSize(0.25)
-    lic.SetEnhanceContrast(lic.ENHANCE_CONTRAST_BOTH)
+    # 細めの流れ線: 高解像ノイズ + やや短めの積分
+    lic.SetNoiseTextureSize(384)
+    lic.SetNoiseGrainSize(1)
+    lic.SetNumberOfSteps(44)
+    lic.SetStepSize(0.22)
+    lic.SetEnhancedLIC(1)
+    lic.SetAntiAlias(1)
+    lic.SetEnhanceContrast(lic.ENHANCE_CONTRAST_LIC)
 
     actor = vtk.vtkActor()
     actor.SetMapper(mapper)
@@ -393,16 +398,35 @@ def _screenshot_surface_lic(
     scalar_bar.SetLookupTable(lut)
     scalar_bar.SetTitle(scalar_name)
     scalar_bar.SetNumberOfLabels(5)
+    scalar_bar.UnconstrainedFontSizeOn()
+    scalar_bar.SetWidth(0.07)
+    scalar_bar.SetHeight(0.55)
+    scalar_bar.SetPosition(0.90, 0.22)
+    title_prop = scalar_bar.GetTitleTextProperty()
+    title_prop.SetFontSize(12)
+    title_prop.BoldOff()
+    title_prop.ItalicOff()
+    title_prop.ShadowOff()
+    title_prop.SetColor(0.1, 0.1, 0.1)
+    label_prop = scalar_bar.GetLabelTextProperty()
+    label_prop.SetFontSize(10)
+    label_prop.BoldOff()
+    label_prop.ItalicOff()
+    label_prop.ShadowOff()
+    label_prop.SetColor(0.1, 0.1, 0.1)
 
     plotter = pv.Plotter(off_screen=True, window_size=window_size)
+    plotter.set_background("white")
     plotter.renderer.AddActor(actor)
     plotter.renderer.AddActor2D(scalar_bar)
     plotter.camera_position = "xy"
     plotter.camera.parallel_projection = True
     plotter.reset_camera()
+    # 余白を詰め、メッシュを大きく見せる
+    plotter.camera.zoom(1.45)
     plotter.add_axes()
     if title:
-        plotter.add_text(title, font_size=9)
+        plotter.add_text(title, font_size=8)
 
     output = output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -842,19 +866,31 @@ def main() -> int:
             return 1
         print(f"SurfaceLIC を保存しました: {out}  (time={t}, axis={args.axis}, r={r0:g})")
     else:
-        plotter = pv.Plotter(off_screen=True, window_size=(1000, 700))
+        plotter = pv.Plotter(off_screen=True, window_size=(1600, 1000))
+        plotter.set_background("white")
         plotter.add_mesh(
             cut,
             scalars=scalar_name,
             cmap=args.cmap,
             show_edges=False,
             preference="point",
-            scalar_bar_args={"title": scalar_name, "vertical": True},
+            scalar_bar_args={
+                "title": scalar_name,
+                "vertical": True,
+                "title_font_size": 12,
+                "label_font_size": 10,
+                "width": 0.07,
+                "height": 0.55,
+                "n_labels": 5,
+                "fmt": "%.3g",
+            },
         )
         plotter.camera_position = "xy"
         plotter.camera.parallel_projection = True
+        plotter.reset_camera()
+        plotter.camera.zoom(1.45)
         plotter.add_axes()
-        plotter.add_text(title, font_size=9)
+        plotter.add_text(title, font_size=8)
         plotter.screenshot(str(out), transparent_background=False)
         plotter.close()
         print(f"保存しました: {out}  (time={t}, axis={args.axis}, r={r0:g})")
