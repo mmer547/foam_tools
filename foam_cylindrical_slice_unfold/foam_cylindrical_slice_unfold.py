@@ -387,6 +387,7 @@ def _screenshot_surface_lic(
     lic.SetNoiseGrainSize(1)
     lic.SetNumberOfSteps(44)
     lic.SetStepSize(0.22)
+    lic.SetLICIntensity(0.6)
     lic.SetEnhancedLIC(1)
     lic.SetAntiAlias(1)
     lic.SetEnhanceContrast(lic.ENHANCE_CONTRAST_LIC)
